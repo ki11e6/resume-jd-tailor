@@ -9,6 +9,7 @@ Run:  python eval.py
 """
 
 import asyncio
+import sys
 
 from main import run_pipeline
 from eval_data import EVAL_CASES
@@ -18,14 +19,17 @@ def _norm(s: str) -> str:
     return s.strip().lower()
 
 
-async def evaluate() -> None:
+async def evaluate(provider: str = "gemini") -> None:
+    print(f"Running eval on provider: {provider}")
     covered_hits = covered_total = 0
     missing_hits = missing_total = 0
     fabrication_failures = 0
 
     for case in EVAL_CASES:
         print(f"\n--- {case['name']} ---")
-        result = await run_pipeline(case["resume"], case["job_description"], "eval")
+        result = await run_pipeline(
+            case["resume"], case["job_description"], "eval", provider=provider
+        )
         analysis = result.get("analysis") or {}
         tailored = result.get("tailored") or {}
 
@@ -80,4 +84,6 @@ async def evaluate() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(evaluate())
+    # Usage: python eval.py [gemini|groq]   (default: gemini)
+    provider = sys.argv[1] if len(sys.argv) > 1 else "gemini"
+    asyncio.run(evaluate(provider))

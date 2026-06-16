@@ -63,6 +63,17 @@
       </div>
 
       <button id="submit" class="primary" disabled>Tailor my resume</button>
+
+      <div class="engine-row">
+        <span class="engine-label">Engine</span>
+        <div class="segmented" id="engine" role="group" aria-label="AI engine">
+          <button type="button" class="seg active" data-provider="auto">Auto</button>
+          <button type="button" class="seg" data-provider="gemini">Gemini</button>
+          <button type="button" class="seg" data-provider="groq">Groq</button>
+        </div>
+        <span class="engine-hint" id="engine-hint">Auto picks whichever is available.</span>
+      </div>
+
       <p id="form-hint" class="hint">Add a resume and a job description to begin.</p>
     </section>
 
@@ -75,6 +86,7 @@
 
     <!-- ===== Results ===== -->
     <section id="results" hidden>
+      <p id="provider-note" class="provider-note" hidden></p>
       <div class="card score-card">
         <div class="score-ring">
           <span id="score-num">0</span><span class="score-pct">%</span>
@@ -114,6 +126,7 @@
     <section id="error" class="card error-card" hidden>
       <p id="error-text"></p>
       <p id="error-countdown" class="countdown" hidden></p>
+      <button id="use-alternate" class="primary" hidden></button>
       <button id="error-retry" class="secondary">Try again</button>
     </section>
   </main>

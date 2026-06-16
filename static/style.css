@@ -117,6 +117,25 @@ body {
 .secondary:hover { border-color: var(--accent); }
 .hint { color: var(--muted); font-size: 0.82rem; text-align: center; margin: 10px 0 0; }
 
+/* ---- Engine (provider) selector ---- */
+.engine-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.engine-label { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+.segmented { display: inline-flex; background: var(--card-2); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+.seg {
+  background: none; border: none; color: var(--muted); font: inherit;
+  font-size: 0.82rem; padding: 5px 13px; border-radius: 7px; cursor: pointer; transition: background 0.12s, color 0.12s;
+}
+.seg:hover { color: var(--text); }
+.seg.active { background: var(--accent); color: #0b1220; font-weight: 600; }
+.engine-hint { font-size: 0.75rem; color: var(--muted); margin-left: auto; }
+
+/* fallback / active-engine note above results */
+.provider-note {
+  margin: 0 0 16px; padding: 11px 15px; border-radius: 10px;
+  background: var(--accent-soft); border: 1px solid var(--border);
+  font-size: 0.88rem; color: var(--text);
+}
+
 /* ---- Progress ---- */
 .progress { text-align: center; padding: 40px 24px; }
 .spinner {

@@ -18,15 +18,39 @@ const els = {
   progress: $("progress"),
   stageText: $("stage-text"),
   results: $("results"),
+  engine: $("engine"),
+  engineHint: $("engine-hint"),
+  providerNote: $("provider-note"),
   error: $("error"),
   errorText: $("error-text"),
   errorCountdown: $("error-countdown"),
+  useAlternate: $("use-alternate"),
   errorRetry: $("error-retry"),
   restart: $("restart"),
 };
 
 let selectedFile = null;
 let countdownTimer = null;
+let provider = "auto";
+
+const PROVIDER_LABEL = { gemini: "Google Gemini", groq: "Groq", auto: "Auto" };
+
+/* ---------- engine (provider) selector ---------- */
+function setProvider(p) {
+  provider = p;
+  els.engine.querySelectorAll(".seg").forEach((b) =>
+    b.classList.toggle("active", b.dataset.provider === p)
+  );
+  const hints = {
+    auto: "Auto picks whichever is available.",
+    gemini: "Google Gemini — may hit free-tier limits.",
+    groq: "Groq — fast, generous free tier.",
+  };
+  els.engineHint.textContent = hints[p] || "";
+}
+els.engine.querySelectorAll(".seg").forEach((b) =>
+  b.addEventListener("click", () => setProvider(b.dataset.provider))
+);
 
 /* ---------- input handling ---------- */
 
@@ -158,12 +182,13 @@ async function run() {
       const fd = new FormData();
       fd.append("resume_pdf", selectedFile);
       fd.append("job_description", jd);
+      fd.append("provider", provider);
       res = await fetch("/tailor/upload", { method: "POST", body: fd });
     } else {
       res = await fetch("/tailor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resume_text: els.resumeText.value.trim(), job_description: jd }),
+        body: JSON.stringify({ resume_text: els.resumeText.value.trim(), job_description: jd, provider }),
       });
     }
 
@@ -201,6 +226,7 @@ function fail(msg) {
   clearInterval(countdownTimer);
   els.errorText.textContent = msg;
   els.errorCountdown.hidden = true;
+  els.useAlternate.hidden = true;
   els.errorRetry.disabled = false;
   show(els.error);
 }
@@ -210,6 +236,16 @@ function fail(msg) {
 function failRateLimited(info) {
   clearInterval(countdownTimer);
   els.errorText.textContent = info.message || "The AI service is rate-limited right now.";
+
+  // One-tap escape hatch: if another engine wasn't tried, offer to use it now.
+  if (info.alternate) {
+    els.useAlternate.hidden = false;
+    els.useAlternate.textContent = `⚡ Use ${info.alternate_label || info.alternate} now`;
+    els.useAlternate.onclick = () => { setProvider(info.alternate); run(); };
+  } else {
+    els.useAlternate.hidden = true;
+  }
+
   const readyAt = info.ready_at
     ? new Date(info.ready_at).getTime()
     : Date.now() + (info.retry_after_seconds || 60) * 1000;
@@ -272,6 +308,18 @@ function fmt(s) { return esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
 function render(data) {
   const analysis = data.analysis || {};
   const tailored = data.tailored || {};
+
+  // Tell the user which engine ran, and call out a transparent fallback.
+  if (data.fell_back) {
+    els.providerNote.textContent =
+      `⚡ The preferred engine was busy — tailored with ${PROVIDER_LABEL[data.provider_used] || data.provider_used} instead.`;
+    els.providerNote.hidden = false;
+  } else if (data.provider_used) {
+    els.providerNote.textContent = `Tailored with ${PROVIDER_LABEL[data.provider_used] || data.provider_used}.`;
+    els.providerNote.hidden = false;
+  } else {
+    els.providerNote.hidden = true;
+  }
 
   // score ring (count-up + arc)
   const score = Math.max(0, Math.min(100, Number(analysis.match_score) || 0));

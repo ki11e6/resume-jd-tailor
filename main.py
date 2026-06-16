@@ -10,7 +10,7 @@ import json
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -21,7 +21,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from agents import root_agent
+from agents import SUPPORTED_PROVIDERS, build_root_agent
 from pdf_utils import extract_resume_text
 
 load_dotenv()
@@ -29,13 +29,29 @@ APP_NAME = "resume_tailor"
 
 app = FastAPI(title="Resume <-> JD Tailor")
 session_service = InMemorySessionService()
-runner = Runner(agent=root_agent, app_name=APP_NAME, session_service=session_service)
+
+# One Runner per provider, built lazily and cached. All share the single,
+# provider-agnostic session service, so run_pipeline's seeding logic is unchanged.
+_runners: dict[str, Runner] = {}
+PROVIDER_LABELS = {"gemini": "Google Gemini", "groq": "Groq"}
+
+
+def _runner_for(provider: str) -> Runner:
+    if provider not in _runners:
+        _runners[provider] = Runner(
+            agent=build_root_agent(provider),
+            app_name=APP_NAME,
+            session_service=session_service,
+        )
+    return _runners[provider]
 
 
 class TailorRequest(BaseModel):
     resume_text: str
     job_description: str
     user_id: str = "demo-user"
+    # "auto" tries Gemini then falls back to Groq if rate-limited.
+    provider: Literal["auto", "gemini", "groq"] = "auto"
 
 
 def _as_dict(value: Any) -> Any:
@@ -48,7 +64,10 @@ def _as_dict(value: Any) -> Any:
     return value
 
 
-async def run_pipeline(resume_text: str, jd_text: str, user_id: str = "demo-user") -> dict:
+async def run_pipeline(
+    resume_text: str, jd_text: str, user_id: str = "demo-user", provider: str = "gemini"
+) -> dict:
+    runner = _runner_for(provider)
     session_id = str(uuid.uuid4())
     await session_service.create_session(
         app_name=APP_NAME,
@@ -99,7 +118,8 @@ def _rate_limit_info(exc: Exception) -> dict | None:
     """
     text = _exc_text(exc)
     low = text.lower()
-    if not any(m in low for m in ("resource_exhausted", "quota", "rate limit")) and "429" not in text:
+    markers = ("resource_exhausted", "quota", "rate limit", "rate_limit", "ratelimit", "too many requests")
+    if not any(m in low for m in markers) and "429" not in text:
         return None
 
     now = datetime.now(timezone.utc)
@@ -141,27 +161,50 @@ def _rate_limit_info(exc: Exception) -> dict | None:
     }
 
 
-async def _run_or_429(resume_text: str, jd_text: str, user_id: str) -> dict:
-    """Run the pipeline, converting model rate-limit errors into a clean 429 with
-    a Retry-After header instead of a bare 500."""
-    try:
-        return await run_pipeline(resume_text, jd_text, user_id)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        info = _rate_limit_info(exc)
-        if info is None:
+def _provider_order(provider: str) -> list[str]:
+    if provider == "auto":
+        return ["gemini", "groq"]
+    if provider in SUPPORTED_PROVIDERS:
+        return [provider]
+    raise HTTPException(status_code=422, detail=f"Unknown provider: {provider!r}")
+
+
+async def _tailor(resume_text: str, jd_text: str, user_id: str, provider: str) -> dict:
+    """Run the pipeline on the chosen provider. In 'auto', transparently fall back
+    to the next provider when one is rate-limited. If every attempted provider is
+    rate-limited, return a 429 whose detail names any untried alternate, so the UI
+    can offer a one-tap switch ('Use Groq now'). Real (non-rate-limit) errors are
+    never masked by a fallback."""
+    order = _provider_order(provider)
+    last_info = None
+    for index, name in enumerate(order):
+        try:
+            result = await run_pipeline(resume_text, jd_text, user_id, provider=name)
+            result["provider_used"] = name
+            result["fell_back"] = index > 0
+            return result
+        except HTTPException:
             raise
-        raise HTTPException(
-            status_code=429,
-            detail=info["detail"],
-            headers={"Retry-After": str(info["retry_after_seconds"])},
-        ) from exc
+        except Exception as exc:
+            info = _rate_limit_info(exc)
+            if info is None:
+                raise
+            last_info = info
+
+    untried = [p for p in SUPPORTED_PROVIDERS if p not in order]
+    detail = dict(last_info["detail"])
+    detail["alternate"] = untried[0] if untried else None
+    detail["alternate_label"] = PROVIDER_LABELS.get(untried[0]) if untried else None
+    raise HTTPException(
+        status_code=429,
+        detail=detail,
+        headers={"Retry-After": str(last_info["retry_after_seconds"])},
+    )
 
 
 @app.post("/tailor")
 async def tailor(req: TailorRequest):
-    return await _run_or_429(req.resume_text, req.job_description, req.user_id)
+    return await _tailor(req.resume_text, req.job_description, req.user_id, req.provider)
 
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB — mirrors the client-side cap
@@ -172,6 +215,7 @@ async def tailor_upload(
     resume_pdf: UploadFile = File(...),
     job_description: str = Form(...),
     user_id: str = Form("demo-user"),
+    provider: str = Form("auto"),
 ):
     """Thin adapter for the web UI: extract text from an uploaded PDF, then run
     the exact same pipeline as /tailor. The JSON /tailor contract stays untouched
@@ -197,7 +241,7 @@ async def tailor_upload(
         # Reject before any LLM call — protects the no-fabrication guarantee.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return await _run_or_429(resume_text, job_description, user_id)
+    return await _tailor(resume_text, job_description, user_id, provider)
 
 
 @app.get("/health")
