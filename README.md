@@ -12,6 +12,10 @@ harness.
 **Stack:** Python · [Google ADK](https://google.github.io/adk-docs/) (Agent
 Development Kit) · FastAPI · Pydantic · `pypdf` · vanilla JS frontend.
 
+**🔗 Live demo:** <https://huggingface.co/spaces/Sharath32/resume-jd-tailor>
+<sub>(Hosted on a free tier — the underlying model key is rate-limited, so a live
+run may occasionally need a retry.)</sub>
+
 ---
 
 ## Demo
