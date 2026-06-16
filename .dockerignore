@@ -1,0 +1,22 @@
+# Keep the image small and secret-free
+.git/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.env
+!.env.example
+logs/
+*.log
+resume-tailor.zip
+
+# Local tooling / scratch / demo build artifacts (not part of the runtime app)
+.claude/
+_bmad/
+_bmad-output/
+CLAUDE.md
+BUILD_GUIDE.md
+ARCHITECTURE_WALKTHROUGH.md
+static/_*.pdf
+static/_frame_*.html

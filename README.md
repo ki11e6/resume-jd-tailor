@@ -14,14 +14,35 @@ Development Kit) · FastAPI · Pydantic · `pypdf` · vanilla JS frontend.
 
 ---
 
+## Demo
+
+![Resume ↔ JD Tailor walkthrough](docs/demo.gif)
+
+> A data-engineer résumé tailored to a senior data-platform role: the pipeline
+> scores the fit, rewrites bullets to match the JD's language, and lists the
+> skills it **refused to fabricate** (Kubernetes, Kafka, Terraform…) as honest
+> gaps instead of inventing them.
+
+<details><summary><b>Screenshots</b></summary>
+
+| Input | Results |
+| --- | --- |
+| ![Input form](docs/demo-form.png) | ![Results screen](docs/demo-results.png) |
+
+</details>
+
+---
+
 ## Contents
 
+- [Demo](#demo)
 - [Features](#features)
 - [Architecture](#architecture)
 - [Request lifecycle](#request-lifecycle)
 - [Why it's built this way](#why-its-built-this-way)
 - [API](#api)
 - [Web UI](#web-ui)
+- [Deployment](#deployment)
 - [Getting started](#getting-started)
 - [Evaluation](#evaluation)
 - [Project structure](#project-structure)
@@ -192,6 +213,30 @@ A dependency-free single page (`static/`) served by the same app at `/`:
   and gives `honest_gaps` its own clearly-labelled panel — the integrity feature
   is front and center, not hidden.
 
+## Deployment
+
+The app is containerized, so it runs on any container host:
+
+```bash
+docker build -t resume-jd-tailor .
+docker run -p 7860:7860 --env-file .env resume-jd-tailor   # → http://localhost:7860
+```
+
+- **Hugging Face Spaces** (free): create a *Docker* Space, push this repo, and add
+  `GOOGLE_API_KEY` + `GOOGLE_GENAI_USE_VERTEXAI=FALSE` as Space secrets. The
+  container listens on `7860` (the Spaces default).
+- **Google Cloud Run** (free tier, scales to zero):
+  ```bash
+  gcloud run deploy resume-jd-tailor --source . \
+    --set-env-vars GOOGLE_GENAI_USE_VERTEXAI=FALSE \
+    --set-secrets GOOGLE_API_KEY=GOOGLE_API_KEY:latest \
+    --allow-unauthenticated
+  ```
+
+> The pipeline makes several model calls per request, so a public demo on a
+> free API key can hit rate limits. For real traffic, enable billing on the key
+> or route to another provider via ADK's LiteLLM support.
+
 ## Getting started
 
 ```bash
@@ -237,6 +282,8 @@ resume-tailor/
 ├── eval.py          # evaluation harness (fabrication tripwire)
 ├── eval_data.py     # labeled (resume, JD) test cases
 ├── static/          # single-page web UI (HTML/CSS/JS)
+├── docs/            # README media (demo GIF + screenshots)
+├── Dockerfile       # portable image (Hugging Face Spaces / Cloud Run)
 ├── requirements.txt
 ├── Makefile
 └── .env.example
