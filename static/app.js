@@ -20,11 +20,13 @@ const els = {
   results: $("results"),
   error: $("error"),
   errorText: $("error-text"),
+  errorCountdown: $("error-countdown"),
   errorRetry: $("error-retry"),
   restart: $("restart"),
 };
 
 let selectedFile = null;
+let countdownTimer = null;
 
 /* ---------- input handling ---------- */
 
@@ -143,6 +145,7 @@ function show(section) {
 }
 
 async function run() {
+  clearInterval(countdownTimer);
   show(els.progress);
   startStages();
 
@@ -166,10 +169,13 @@ async function run() {
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      const detail = body.detail || `Something went wrong (HTTP ${res.status}).`;
       stopStages();
+      // 429 = model rate-limited. Show when it'll be ready, with a live countdown.
+      if (res.status === 429) return failRateLimited(body.detail || {});
       // 422 = PDF unreadable. Nudge the user to the paste box.
       if (res.status === 422 && !usingPaste) revealPaste();
+      const detail =
+        typeof body.detail === "string" ? body.detail : `Something went wrong (HTTP ${res.status}).`;
       return fail(detail);
     }
 
@@ -191,7 +197,54 @@ async function run() {
   }
 }
 
-function fail(msg) { els.errorText.textContent = msg; show(els.error); }
+function fail(msg) {
+  clearInterval(countdownTimer);
+  els.errorText.textContent = msg;
+  els.errorCountdown.hidden = true;
+  els.errorRetry.disabled = false;
+  show(els.error);
+}
+
+// Rate-limited: show the message + a live countdown to when the app is ready,
+// and keep "Try again" disabled until then.
+function failRateLimited(info) {
+  clearInterval(countdownTimer);
+  els.errorText.textContent = info.message || "The AI service is rate-limited right now.";
+  const readyAt = info.ready_at
+    ? new Date(info.ready_at).getTime()
+    : Date.now() + (info.retry_after_seconds || 60) * 1000;
+  const localTime = new Date(readyAt).toLocaleString(undefined, {
+    hour: "numeric", minute: "2-digit", month: "short", day: "numeric",
+  });
+
+  els.errorCountdown.hidden = false;
+  show(els.error);
+
+  const tick = () => {
+    const ms = readyAt - Date.now();
+    if (ms <= 0) {
+      clearInterval(countdownTimer);
+      els.errorCountdown.textContent = "Ready now — go ahead and try again.";
+      els.errorCountdown.classList.add("ready");
+      els.errorRetry.disabled = false;
+      return;
+    }
+    els.errorCountdown.classList.remove("ready");
+    els.errorRetry.disabled = true;
+    els.errorCountdown.textContent = `Ready in ${fmtCountdown(ms)}  ·  ~${localTime}`;
+  };
+  tick();
+  countdownTimer = setInterval(tick, 1000);
+}
+
+function fmtCountdown(ms) {
+  const s = Math.ceil(ms / 1000);
+  if (s < 90) return `${s}s`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h >= 1) return `${h}h ${m}m`;
+  return `${m}m ${s % 60}s`;
+}
 
 function revealPaste() {
   // Drop the unreadable file so the user's pasted text is actually used on retry

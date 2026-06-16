@@ -7,8 +7,11 @@ the run we read the structured results back out of state.
 """
 
 import json
+import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
@@ -72,9 +75,93 @@ async def run_pipeline(resume_text: str, jd_text: str, user_id: str = "demo-user
     }
 
 
+def _exc_text(exc: BaseException | None, depth: int = 0) -> str:
+    """Flatten an exception tree into one string. The rate-limit error surfaces
+    inside a BaseExceptionGroup (ParallelAgent runs the parsers in a TaskGroup)
+    and is also chained via __cause__/__context__, so str(exc) alone misses it."""
+    if exc is None or depth > 6:
+        return ""
+    parts = [str(exc)]
+    for sub in getattr(exc, "exceptions", None) or ():
+        parts.append(_exc_text(sub, depth + 1))
+    parts.append(_exc_text(getattr(exc, "__cause__", None), depth + 1))
+    parts.append(_exc_text(getattr(exc, "__context__", None), depth + 1))
+    return "\n".join(p for p in parts if p)
+
+
+def _rate_limit_info(exc: Exception) -> dict | None:
+    """If `exc` is a model rate-limit/quota error, build a 429 payload telling the
+    user when to retry. Returns None for any other error (so it stays a real 500).
+
+    Two shapes matter: a short per-minute throttle (retry in seconds, taken from
+    the API's retryDelay) vs the daily free-tier quota, which only resets at
+    midnight US Pacific — surfacing the API's tiny retryDelay there would be a lie.
+    """
+    text = _exc_text(exc)
+    low = text.lower()
+    if not any(m in low for m in ("resource_exhausted", "quota", "rate limit")) and "429" not in text:
+        return None
+
+    now = datetime.now(timezone.utc)
+    is_daily = "perday" in low.replace("_", "").replace(" ", "")
+
+    if is_daily:
+        try:
+            pacific = ZoneInfo("America/Los_Angeles")
+            tomorrow = (now.astimezone(pacific) + timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            ready = tomorrow.astimezone(timezone.utc)
+        except Exception:
+            ready = now + timedelta(hours=1)
+        message = (
+            "The AI model's free-tier daily quota is used up. This demo's key "
+            "resets at midnight US Pacific — try again after that, or run it "
+            "locally with your own API key."
+        )
+        scope = "daily"
+    else:
+        match = re.search(r"retrydelay['\"]?\s*[:=]\s*['\"]?(\d+)", low) or re.search(
+            r"retry in (\d+)", low
+        )
+        ready = now + timedelta(seconds=int(match.group(1)) if match else 60)
+        message = "The AI model is briefly rate-limited. Hang tight — you can retry shortly."
+        scope = "short"
+
+    seconds = max(1, int((ready - now).total_seconds()))
+    return {
+        "retry_after_seconds": seconds,
+        "detail": {
+            "error": "rate_limited",
+            "scope": scope,
+            "message": message,
+            "retry_after_seconds": seconds,
+            "ready_at": ready.isoformat().replace("+00:00", "Z"),
+        },
+    }
+
+
+async def _run_or_429(resume_text: str, jd_text: str, user_id: str) -> dict:
+    """Run the pipeline, converting model rate-limit errors into a clean 429 with
+    a Retry-After header instead of a bare 500."""
+    try:
+        return await run_pipeline(resume_text, jd_text, user_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        info = _rate_limit_info(exc)
+        if info is None:
+            raise
+        raise HTTPException(
+            status_code=429,
+            detail=info["detail"],
+            headers={"Retry-After": str(info["retry_after_seconds"])},
+        ) from exc
+
+
 @app.post("/tailor")
 async def tailor(req: TailorRequest):
-    return await run_pipeline(req.resume_text, req.job_description, req.user_id)
+    return await _run_or_429(req.resume_text, req.job_description, req.user_id)
 
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB — mirrors the client-side cap
@@ -110,7 +197,7 @@ async def tailor_upload(
         # Reject before any LLM call — protects the no-fabrication guarantee.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return await run_pipeline(resume_text, job_description, user_id)
+    return await _run_or_429(resume_text, job_description, user_id)
 
 
 @app.get("/health")

@@ -188,4 +188,13 @@ body {
 
 /* ---- Error ---- */
 .error-card { border-color: #5a3a3a; background: #241a1a; }
-#error-text { margin: 0 0 14px; }
+#error-text { margin: 0 0 10px; }
+.countdown {
+  margin: 0 0 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--partial);
+}
+.countdown.ready { color: var(--good); }
+.secondary:disabled { opacity: 0.45; cursor: not-allowed; }
+.secondary:disabled:hover { border-color: var(--border); }
