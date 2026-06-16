@@ -1,0 +1,35 @@
+# Environment / secrets
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Runtime / app artifacts
+logs/
+*.log
+static/_demo_*.pdf
+
+# Redundant project snapshot
+resume-tailor.zip
+
+# BMAD framework + Claude Code tooling (installer-managed, not part of the app)
+.claude/
+_bmad/
+_bmad-output/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
